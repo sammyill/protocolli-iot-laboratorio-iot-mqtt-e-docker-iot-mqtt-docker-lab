@@ -1,0 +1,86 @@
+version: "3.9"
+#reti in caso solo reti web
+networks:
+  web:
+#volimi in questo cado db_data
+volumes:
+  db_data:
+
+#servizi con stack
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+     -"1883:1883"
+
+  #versione di traefik
+  traefik:
+    image: traefik:v3.6.7
+    #coandi eseguite da traefic,utilizzadocker
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+    #ascolta su porta 80,mappa 80 di host con 80 di container
+    ports:
+      - "80:80"
+   #accede als soket docker per acceder alle configurazione dei container
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [web]
+
+  db:
+    image: mysql:8
+    #variabili per il db,
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      
+      MYSQL_DATABASE: itsdb
+    #mappa un volume per memorizzare i dati
+    volumes:
+      - db_data:/var/lib/mysql
+    networks: [web]
+    healthcheck:
+        test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"]
+        interval: 5s
+        timeout: 5s
+        retries: 20
+        start_period: 10s
+
+  #servizio adminer su porta 8080,traefic fa da host per lui
+  adminer:
+    image: adminer
+    labels:
+      - "traefik.enable=true"
+      #nome rotta con nomer da chiamare per host chiamante
+      - "traefik.http.routers.adminer.rule=Host(`its-db.traefik.me`)"
+      #servizio admine risponde su parta 8080 interna,adminer risponde su 80 internamente
+      - "traefik.http.services.adminer.loadbalancer.server.port=8080"
+    networks: [web]
+
+  #bilda api
+  api:
+    build: ./api
+    environment:
+      DB_HOST: db
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: itsdb
+    depends_on:
+      db:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      #indirizzo da esterno
+      - "traefik.http.routers.api.rule=Host(`its-api.traefik.me`)"
+      #ascolta su porta 3000
+      - "traefik.http.services.api.loadbalancer.server.port=3000"
+    networks: [web]
+
+#interfaccia ew gestisce rotta web,risponse su porta standar 80
+  web:
+    build: ./web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.web.rule=Host(`its-web.traefik.me`)"
+    networks: [web]
